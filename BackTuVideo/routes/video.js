@@ -1,36 +1,55 @@
 const express = require('express');
-const { Video } = require('../models/Video');
-const { Video: MuxVideo } = new (require('@mux/mux-node'))(process.env.MUX_TOKEN_ID, process.env.MUX_TOKEN_SECRET);
+const { protect } = require('../middleware/auth');
+const Video = require('../models/Video');
+const MuxVideo = require('../config/mux');
 const router = express.Router();
 
-// Subir video
-router.post('/upload', async (req, res) => {
-    try {
-        const { title, description, visibility } = req.body;
-        const asset = await MuxVideo.Assets.create({ input: req.body.videoUrl, playback_policy: 'public' });
+// Subir un video
+router.post('/upload', protect, async (req, res) => {
+    const { title, description, visibility } = req.body; // Asegúrate de pasar estos datos desde el front-end
 
-        const newVideo = await Video.create({
-            title,
-            description,
-            visibility,
-            user: req.user.id,
-            muxAssetId: asset.id,
-            playbackId: asset.playback_ids[0].id,
+    try {
+        // Crear un nuevo asset de video en Mux
+        const muxAsset = await MuxVideo.Assets.create({
+            input: req.body.inputUrl, // URL del archivo que deseas subir
+            playback_policy: visibility === 'public' ? 'public' : 'signed', // Políticas de reproducción
         });
 
-        res.status(201).json(newVideo);
-    } catch (err) {
-        res.status(500).json({ message: 'Error al subir video', error: err.message });
+        // Guardar el video en la base de datos
+        const video = await Video.create({
+            user: req.user.id, // ID del usuario que sube el video
+            title,
+            description,
+            muxAssetId: muxAsset.id, // ID del asset en Mux
+            playbackId: muxAsset.playback_ids[0]?.id, // ID de reproducción
+            visibility,
+        });
+
+        res.status(201).json({ message: 'Video subido correctamente', video });
+    } catch (error) {
+        res.status(500).json({ message: 'Error al subir el video', error: error.message });
     }
 });
 
 // Obtener videos públicos
-router.get('/public', async (req, res) => {
+router.get('/', async (req, res) => {
     try {
         const videos = await Video.find({ visibility: 'public' });
-        res.json(videos);
-    } catch (err) {
-        res.status(500).json({ message: 'Error al obtener videos', error: err.message });
+
+        res.status(200).json(videos);
+    } catch (error) {
+        res.status(500).json({ message: 'Error al obtener los videos', error: error.message });
+    }
+});
+
+// Obtener videos del usuario autenticado
+router.get('/my-videos', protect, async (req, res) => {
+    try {
+        const videos = await Video.find({ user: req.user.id });
+
+        res.status(200).json(videos);
+    } catch (error) {
+        res.status(500).json({ message: 'Error al obtener tus videos', error: error.message });
     }
 });
 
